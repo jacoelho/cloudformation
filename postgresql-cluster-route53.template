@@ -1,0 +1,562 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Postgresql Template with two hosts",
+  "Parameters": {
+    "Email": {
+      "Default": "email@aa.aa",
+      "Description": "Admin email",
+      "Type": "String"
+    },
+    "VpcId": {
+      "Description": "VpcId of your existing Virtual Private Cloud (VPC)",
+      "Type": "AWS::EC2::VPC::Id"
+    },
+    "Environment": {
+      "AllowedPattern": "[-_ a-zA-Z0-9]*",
+      "ConstraintDescription": "Can contain only alphanumeric characters, spaces, dashes and underscores.",
+      "Default": "test",
+      "Description": "Description of deployment environment, e. g., test or production",
+      "MaxLength": "64",
+      "MinLength": "1",
+      "Type": "String"
+    },
+    "KeyName": {
+      "ConstraintDescription": "Value must be a valid AWS key pair name in your account.",
+      "Description": "Name of an existing EC2 KeyPair to enable SSH access to the instances",
+      "Type": "AWS::EC2::KeyPair::KeyName"
+    },
+    "SubnetIds": {
+      "Description": "Subnet IDs",
+      "Type": "List<AWS::EC2::Subnet::Id>"
+    },
+    "BastionSecurityGroupId": {
+      "Description": "Bastion Host security group",
+      "Type": "AWS::EC2::SecurityGroup::Id"
+    },
+    "ServiceDomain": {
+      "Default": "internal",
+      "Description": "Domain to register for services",
+      "MaxLength": "64",
+      "MinLength": "1",
+      "Type": "String"
+    },
+    "PostgresqlPort": {
+      "Default": "5432",
+      "Description": "TCP/IP port for the postgresql server",
+      "Type": "Number",
+      "MinValue": "1",
+      "MaxValue": "65535"
+    },
+    "PostgresqlInstanceType": {
+      "Description": "Instance type for postgresql nodes",
+      "Type": "String",
+      "AllowedValues": [
+        "m3.medium",
+        "m3.large",
+        "m3.xlarge",
+        "m3.2xlarge",
+        "c3.large",
+        "c3.xlarge",
+        "c3.2xlarge",
+        "c3.4xlarge",
+        "c3.8xlarge",
+        "cc2.8xlarge",
+        "cr1.8xlarge",
+        "hi1.4xlarge",
+        "hs1.8xlarge",
+        "i2.xlarge",
+        "i2.2xlarge",
+        "i2.4xlarge",
+        "i2.8xlarge",
+        "r3.large",
+        "r3.xlarge",
+        "r3.2xlarge",
+        "r3.4xlarge",
+        "r3.8xlarge",
+        "t2.micro",
+        "t2.small",
+        "t2.medium"
+      ],
+      "ConstraintDescription": "Must be a valid EC2 instance type.",
+      "Default": "t2.micro"
+    }
+  },
+  "Mappings": {
+    "UbuntuTrustyAMI": {
+      "us-west-1": {
+        "AMI": "ami-896d93cd"
+      }
+    }
+  },
+  "Resources": {
+    "PostgresqlSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Postgresql Group",
+        "VpcId": {
+          "Ref": "VpcId"
+        },
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": {
+              "Fn::Join": [
+                "-",
+                [
+                  "SG",
+                  "Postgresql",
+                  {
+                    "Ref": "AWS::StackName"
+                  }
+                ]
+              ]
+            }
+          },
+          {
+            "Key": "Network",
+            "Value": "Private"
+          },
+          {
+            "Key": "Environment",
+            "Value": {
+              "Ref": "Environment"
+            }
+          }
+        ]
+      }
+    },
+    "PostgresqlAccessSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Postgresql Access Group",
+        "VpcId": {
+          "Ref": "VpcId"
+        },
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": {
+              "Fn::Join": [
+                "-",
+                [
+                  "SG",
+                  "Postgresql",
+                  "Access",
+                  {
+                    "Ref": "AWS::StackName"
+                  }
+                ]
+              ]
+            }
+          },
+          {
+            "Key": "Network",
+            "Value": "Private"
+          },
+          {
+            "Key": "Environment",
+            "Value": {
+              "Ref": "Environment"
+            }
+          }
+        ]
+      }
+    },
+    "PostgresqlSelfInboundRule": {
+      "Type": "AWS::EC2::SecurityGroupIngress",
+      "Properties": {
+        "IpProtocol": "tcp",
+        "FromPort": {
+          "Ref": "PostgresqlPort"
+        },
+        "ToPort": {
+          "Ref": "PostgresqlPort"
+        },
+        "SourceSecurityGroupId": {
+          "Fn::GetAtt": [
+            "PostgresqlSecurityGroup",
+            "GroupId"
+          ]
+        },
+        "GroupId": {
+          "Fn::GetAtt": [
+            "PostgresqlSecurityGroup",
+            "GroupId"
+          ]
+        }
+      }
+    },
+    "PostgresqlAccessSelfInboundRule": {
+      "Type": "AWS::EC2::SecurityGroupIngress",
+      "Properties": {
+        "IpProtocol": "tcp",
+        "FromPort": {
+          "Ref": "PostgresqlPort"
+        },
+        "ToPort": {
+          "Ref": "PostgresqlPort"
+        },
+        "SourceSecurityGroupId": {
+          "Fn::GetAtt": [
+            "PostgresqlAccessSecurityGroup",
+            "GroupId"
+          ]
+        },
+        "GroupId": {
+          "Fn::GetAtt": [
+            "PostgresqlAccessSecurityGroup",
+            "GroupId"
+          ]
+        }
+      }
+    },
+    "PostgresqlInboundRule": {
+      "Type": "AWS::EC2::SecurityGroupIngress",
+      "Properties": {
+        "IpProtocol": "tcp",
+        "FromPort": {
+          "Ref": "PostgresqlPort"
+        },
+        "ToPort": {
+          "Ref": "PostgresqlPort"
+        },
+        "SourceSecurityGroupId": {
+          "Fn::GetAtt": [
+            "PostgresqlAccessSecurityGroup",
+            "GroupId"
+          ]
+        },
+        "GroupId": {
+          "Fn::GetAtt": [
+            "PostgresqlSecurityGroup",
+            "GroupId"
+          ]
+        }
+      }
+    },
+    "PostgresqAccessEgressRule": {
+      "Type": "AWS::EC2::SecurityGroupEgress",
+      "Properties": {
+        "IpProtocol": "tcp",
+        "FromPort": {
+          "Ref": "PostgresqlPort"
+        },
+        "ToPort": {
+          "Ref": "PostgresqlPort"
+        },
+        "DestinationSecurityGroupId": {
+          "Fn::GetAtt": [
+            "PostgresqlSecurityGroup",
+            "GroupId"
+          ]
+        },
+        "GroupId": {
+          "Fn::GetAtt": [
+            "PostgresqlAccessSecurityGroup",
+            "GroupId"
+          ]
+        }
+      }
+    },
+    "PostgresqlSelfEgressRule": {
+      "Type": "AWS::EC2::SecurityGroupEgress",
+      "Properties": {
+        "IpProtocol": "tcp",
+        "FromPort": {
+          "Ref": "PostgresqlPort"
+        },
+        "ToPort": {
+          "Ref": "PostgresqlPort"
+        },
+        "DestinationSecurityGroupId": {
+          "Fn::GetAtt": [
+            "PostgresqlSecurityGroup",
+            "GroupId"
+          ]
+        },
+        "GroupId": {
+          "Fn::GetAtt": [
+            "PostgresqlSecurityGroup",
+            "GroupId"
+          ]
+        }
+      }
+    },
+    "HostOne": {
+      "Type": "AWS::EC2::Instance",
+      "Properties": {
+        "InstanceType": {
+          "Ref": "PostgresqlInstanceType"
+        },
+        "KeyName": {
+          "Ref": "KeyName"
+        },
+        "SubnetId": {
+          "Fn::Select": [
+            0,
+            {
+              "Ref": "SubnetIds"
+            }
+          ]
+        },
+        "ImageId": {
+          "Fn::FindInMap": [
+            "UbuntuTrustyAMI",
+            {
+              "Ref": "AWS::Region"
+            },
+            "AMI"
+          ]
+        },
+        "UserData": {
+          "Fn::Base64": {
+            "Fn::Join": [
+              "",
+              [
+                "#cloud-config\n",
+                "apt_upgrade: true\n",
+                "locale: en_US.UTF-8\n",
+                "debconf_selections: |\n",
+                "  unattended-upgrades unattended-upgrades/enable_auto_updates boolean true\n"
+              ]
+            ]
+          }
+        },
+        "SecurityGroupIds": [
+          {
+            "Ref": "BastionSecurityGroupId"
+          },
+          {
+            "Ref": "PostgresqlSecurityGroup"
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": {
+              "Fn::Join": [
+                "-",
+                [
+                  "Postgresql",
+                  "Host",
+                  {
+                    "Ref": "AWS::StackName"
+                  }
+                ]
+              ]
+            }
+          },
+          {
+            "Key": "Environment",
+            "Value": {
+              "Ref": "Environment"
+            }
+          },
+          {
+            "Key": "Role",
+            "Value": "postgresql"
+          }
+        ]
+      }
+    },
+    "HostTwo": {
+      "Type": "AWS::EC2::Instance",
+      "Properties": {
+        "InstanceType": {
+          "Ref": "PostgresqlInstanceType"
+        },
+        "KeyName": {
+          "Ref": "KeyName"
+        },
+        "SubnetId": {
+          "Fn::Select": [
+            1,
+            {
+              "Ref": "SubnetIds"
+            }
+          ]
+        },
+        "ImageId": {
+          "Fn::FindInMap": [
+            "UbuntuTrustyAMI",
+            {
+              "Ref": "AWS::Region"
+            },
+            "AMI"
+          ]
+        },
+        "UserData": {
+          "Fn::Base64": {
+            "Fn::Join": [
+              "",
+              [
+                "#cloud-config\n",
+                "apt_upgrade: true\n",
+                "locale: en_US.UTF-8\n",
+                "debconf_selections: |\n",
+                "  unattended-upgrades unattended-upgrades/enable_auto_updates boolean true\n"
+              ]
+            ]
+          }
+        },
+        "SecurityGroupIds": [
+          {
+            "Ref": "BastionSecurityGroupId"
+          },
+          {
+            "Ref": "PostgresqlSecurityGroup"
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": {
+              "Fn::Join": [
+                "-",
+                [
+                  "Postgresql",
+                  "Host",
+                  {
+                    "Ref": "AWS::StackName"
+                  }
+                ]
+              ]
+            }
+          },
+          {
+            "Key": "Environment",
+            "Value": {
+              "Ref": "Environment"
+            }
+          },
+          {
+            "Key": "Role",
+            "Value": "postgresql"
+          }
+        ]
+      }
+    },
+    "HostOneDnsHealthCheck": {
+      "Type": "AWS::Route53::HealthCheck",
+      "Properties": {
+        "HealthCheckConfig": {
+          "FullyQualifiedDomainName": {
+            "Fn::GetAtt": [
+              "HostOne",
+              "PrivateDnsName"
+            ]
+          },
+          "Port": {
+            "Ref": "PostgresqlPort"
+          },
+          "Type": "TCP",
+          "RequestInterval": "30",
+          "FailureThreshold": "3"
+        }
+      }
+    },
+    "HostTwoDnsHealthCheck": {
+      "Type": "AWS::Route53::HealthCheck",
+      "Properties": {
+        "HealthCheckConfig": {
+          "FullyQualifiedDomainName": {
+            "Fn::GetAtt": [
+              "HostTwo",
+              "PrivateDnsName"
+            ]
+          },
+          "Port": {
+            "Ref": "PostgresqlPort"
+          },
+          "Type": "TCP",
+          "RequestInterval": "30",
+          "FailureThreshold": "3"
+        }
+      }
+    },
+    "PostgresqlDNS": {
+      "Type": "AWS::Route53::RecordSetGroup",
+      "Properties": {
+        "Comment": "postgresql cluster",
+        "HostedZoneName": {
+          "Fn::Join": [
+            "",
+            [
+              {
+                "Ref": "ServiceDomain"
+              },
+              "."
+            ]
+          ]
+        },
+        "RecordSets": [
+          {
+            "Failover": "PRIMARY",
+            "HealthCheckId": {
+              "Ref": "HostOneDnsHealthCheck"
+            },
+            "Name": {
+              "Fn::Join": [
+                "",
+                [
+                  "postgresql-master",
+                  ".",
+                  {
+                    "Ref": "ServiceDomain"
+                  },
+                  "."
+                ]
+              ]
+            },
+            "ResourceRecords": [
+              {
+                "Fn::GetAtt": [
+                  "HostOne",
+                  "PrivateDnsName"
+                ]
+              }
+            ],
+            "SetIdentifier": "PRIMARY",
+            "TTL": "60",
+            "Type": "CNAME"
+          },
+          {
+            "Failover": "SECONDARY",
+            "Name": {
+              "Fn::Join": [
+                "",
+                [
+                  "postgresql-master",
+                  ".",
+                  {
+                    "Ref": "ServiceDomain"
+                  },
+                  "."
+                ]
+              ]
+            },
+            "ResourceRecords": [
+              {
+                "Fn::GetAtt": [
+                  "HostTwo",
+                  "PrivateDnsName"
+                ]
+              }
+            ],
+            "SetIdentifier": "SECONDARY",
+            "TTL": "60",
+            "Type": "CNAME"
+          }
+        ]
+      }
+    }
+  },
+  "Outputs": {
+    "PostgresqlSecurityGroupId": {
+      "Description": "Postgresql Access Security Group Id",
+      "Value": {
+        "Ref": "PostgresqlAccessSecurityGroup"
+      }
+    }
+  }
+}
